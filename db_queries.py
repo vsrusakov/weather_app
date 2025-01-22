@@ -23,9 +23,20 @@ SET forecast = ?
 WHERE ROWID = ?
 """
 
+select_cities = """
+SELECT city, lat, lon FROM city_forecasts
+"""
+
+city_coords = """
+SELECT lat, lon FROM city_forecasts
+WHERE city = ?
+"""
+
 db_queries = {
     'create_city_forecasts': create_city_forecasts,
     'insert_city_forecasts': insert_city_forecasts,
     'select_coords': select_coords,
     'update_forecasts': update_forecasts,
+    'select_cities': select_cities,
+    'city_coords': city_coords,
 }
