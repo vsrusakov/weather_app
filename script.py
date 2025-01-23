@@ -216,7 +216,7 @@ async def main():
         await site.start()
 
         while True:
-            await asyncio.sleep(60)
+            await asyncio.sleep(900)
             await update_forecasts()
 
 
