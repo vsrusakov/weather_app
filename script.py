@@ -1,6 +1,7 @@
 import json
 from datetime import date
 from db_queries import db_queries
+from array import array
 import asyncio
 import aiosqlite
 from aiohttp import web, ClientSession
@@ -10,10 +11,13 @@ app_data = {}
 DEF_TIME_ZONE = 'Europe/Moscow'
 
 
-def bin_forecast(data_json):
-    forecats = data_json['hourly']
-    forecats['hourly_units'] = data_json['hourly_units']
-    return json.dumps(forecats, ensure_ascii=False).encode('utf-8')
+def process_forecast(data_json):
+    precip = data_json['daily']['precipitation_sum'][0]
+    hourly = data_json['hourly']
+    temp = array('f', hourly['temperature_2m']).tobytes()
+    wind = array('f', hourly['wind_speed_10m']).tobytes()
+    humidity = bytes(hourly['relative_humidity_2m'])
+    return precip, temp, wind, humidity
 
 
 async def city_coords(city):
@@ -51,7 +55,7 @@ async def update_forecasts():
                 }
                 data_json, status = await open_meteo_api(params)
                 if status == 200:
-                    new_forecast = bin_forecast(data_json)
+                    new_forecast = process_forecast(data_json)
                     if new_forecast != fc:
                         await db.execute(db_queries['update_forecasts'], (row_id, new_forecast))
                         await db.commit()
@@ -139,19 +143,25 @@ async def post_city(request):
     status = 200
     body = await request.post()
 
-    lat, lon, city = body.get('lat'), body.get('lon'), body.get('city')
+    lat, lon, city = body.get('lat', ''), body.get('lon', ''), body.get('city')
+    if not city:
+        data = {'error': True, 'reason': 'The city parameter is not passed'}
+        status = 400
+        return web.json_response(data=data, status=status)
+    
     params = {
         'latitude': lat,
         'longitude': lon,
         'timezone': body.get('timezone', DEF_TIME_ZONE),
-        'hourly': ['temperature_2m', 'wind_speed_10m'],
+        'hourly': ['temperature_2m', 'wind_speed_10m', 'relative_humidity_2m'],
+        'daily': 'precipitation_sum',
         'forecast_days': 1,
     }
     data, status = await open_meteo_api(params)
 
     if status == 200:
-        b_forecats = bin_forecast(data)
-        row_values = (city.lower(), lat, lon, b_forecats)
+        forecast = process_forecast(data)
+        row_values = (city.lower(), lat, lon, *forecast)
         await save_to_db('city_forecasts', row_values)
         data = {'result': 'City saved'}
     

@@ -4,13 +4,17 @@ CREATE TABLE IF NOT EXISTS city_forecasts
   city TEXT UNIQUE NOT NULL,
   lat REAL NOT NULL,
   lon REAL NOT NULL,
-  forecast BLOB
+  precipitation REAL NOT NULL,
+  temperature BLOB NOT NULL,
+  wind_speed BLOB NOT NULL,
+  humidity BLOB NOT NULL
 )
 """
 
 insert_city_forecasts = """
-INSERT INTO city_forecasts (city, lat, lon, forecast)
- VALUES (?, ?, ?, ?)
+INSERT INTO city_forecasts 
+(city, lat, lon, precipitation, temperature, wind_speed, humidity)
+ VALUES (?, ?, ?, ?, ?, ?, ?)
 """
 
 select_coords = """
