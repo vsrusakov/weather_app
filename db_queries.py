@@ -17,13 +17,16 @@ INSERT INTO city_forecasts
  VALUES (?, ?, ?, ?, ?, ?, ?)
 """
 
-select_coords = """
-SELECT lat, lon, forecast, ROWID FROM city_forecasts
+select_rows = """
+SELECT 
+ROWID, lat, lon, precipitation, 
+temperature, wind_speed, humidity 
+FROM city_forecasts
 """
 
 update_forecasts = """
 UPDATE city_forecasts
-SET forecast = ?
+SET {} = ?
 WHERE ROWID = ?
 """
 
@@ -31,16 +34,16 @@ select_cities = """
 SELECT city, lat, lon FROM city_forecasts
 """
 
-city_coords = """
-SELECT lat, lon FROM city_forecasts
+city_row = """
+SELECT city, lat, lon, {} FROM city_forecasts
 WHERE city = ?
 """
 
 db_queries = {
     'create_city_forecasts': create_city_forecasts,
     'insert_city_forecasts': insert_city_forecasts,
-    'select_coords': select_coords,
+    'select_rows': select_rows,
     'update_forecasts': update_forecasts,
     'select_cities': select_cities,
-    'city_coords': city_coords,
+    'city_row': city_row,
 }
