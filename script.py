@@ -1,5 +1,4 @@
 import json
-# import db_queries
 from datetime import date
 from db_queries import db_queries
 import asyncio
@@ -32,10 +31,12 @@ async def execute_query(query_name):
 
 async def save_to_db(table_name, values):
     query = db_queries[f'insert_{table_name}']
-    async with aiosqlite.connect('weather.db') as db:
-        await db.execute(query, values) 
-        await db.commit()
-
+    try:
+        async with aiosqlite.connect('weather.db') as db:
+            await db.execute(query, values) 
+            await db.commit()
+    except aiosqlite.IntegrityError:
+        pass
 
 async def update_forecasts():
     async with aiosqlite.connect('weather.db') as db:
@@ -130,33 +131,31 @@ async def get_cities(request):
         db.row_factory = aiosqlite.Row
         async with db.execute(db_queries['select_cities']) as cursor:
             cities = [dict(row) async for row in cursor]
-
     return web.json_response(data=cities)
 
 
 async def post_city(request):
-    data_json = None
+    data = None
     status = 200
-    q = await request.post()
+    body = await request.post()
 
-    lat, lon, city = q.get('lat'), q.get('lon'), q.get('city')
+    lat, lon, city = body.get('lat'), body.get('lon'), body.get('city')
     params = {
         'latitude': lat,
         'longitude': lon,
-        'timezone': q.get('timezone', DEF_TIME_ZONE),
+        'timezone': body.get('timezone', DEF_TIME_ZONE),
         'hourly': ['temperature_2m', 'wind_speed_10m'],
         'forecast_days': 1,
     }
-    data_json, status = await open_meteo_api(params)
+    data, status = await open_meteo_api(params)
 
     if status == 200:
-        b_forecats = bin_forecast(data_json)
-
+        b_forecats = bin_forecast(data)
         row_values = (city.lower(), lat, lon, b_forecats)
         await save_to_db('city_forecasts', row_values)
-        data_json = {'result': 'City saved'}
+        data = {'result': 'City saved'}
     
-    return web.json_response(data=data_json, status=status)
+    return web.json_response(data=data, status=status)
 
 
 async def main():
