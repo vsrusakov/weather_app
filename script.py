@@ -1,4 +1,3 @@
-from datetime import date
 from db_queries import db_queries
 from array import array
 import asyncio
@@ -7,7 +6,7 @@ from aiohttp import web, ClientSession
 
 
 app_data = {}
-DEF_TIME_ZONE = 'Europe/Moscow'
+TIME_ZONE = 'Europe/Moscow'
 RETURN_PARAMS = ('precipitation', 'temperature', 'wind_speed', 'humidity')
 
 
@@ -26,7 +25,7 @@ def valudate_city(query):
     return query['city'].lower()
 
 
-def validate_ret_params(query):
+def validate_ret_params(query): 
     ret_params = query.get('return', 'temperature').split(',')
     assert all(p in RETURN_PARAMS for p in ret_params), f'Invalid parameter(s): {", ".join(query["return"])}'
     return ret_params
@@ -41,7 +40,7 @@ def process_forecast(data_json):
     return precip, temp, wind, humidity
 
 
-async def city_row(city, ret_params):
+async def db_city_forecast(city, ret_params):
     query = db_queries['city_row'].format(', '.join(ret_params))
 
     async with aiosqlite.connect('weather.db') as db:
@@ -66,7 +65,7 @@ async def save_to_db(table_name, values):
         await db.commit()
 
 
-async def find_city(city):
+async def db_find_city(city):
     async with aiosqlite.connect('weather.db') as db:
         async with db.execute(db_queries['find_city'], (city,)) as cursor:
             row_id = await cursor.fetchone()
@@ -81,7 +80,7 @@ async def update_forecasts():
                 params = {
                     'latitude': lat,
                     'longitude': lon,
-                    'timezone': DEF_TIME_ZONE,
+                    'timezone': TIME_ZONE,
                     'hourly': ['temperature_2m', 'wind_speed_10m', 'relative_humidity_2m'],
                     'daily': 'precipitation_sum',
                     'forecast_days': 1,
@@ -99,7 +98,7 @@ async def weather_by_coords(query):
     params = {
         'latitude': query['lat'],
         'longitude': query['lon'],
-        'timezone': DEF_TIME_ZONE,
+        'timezone': TIME_ZONE,
         'current': ['temperature_2m', 'wind_speed_10m', 'pressure_msl'],
     }
     data, status = await open_meteo_api(params)
@@ -130,7 +129,7 @@ async def weather_for_city(query):
         data = {'error': True, 'reason': 'Server error'}
         status = 500
     else:
-        row = await city_row(city, ret_params)
+        row = await db_city_forecast(city, ret_params)
 
         if row is None:
             data = {'error': True, 'reason': 'The city is not in the database'}
@@ -189,13 +188,13 @@ async def post_city(request):
         status = 400
         return web.json_response(data=data, status=status)
     
-    city_id = await find_city(city)
+    city_id = await db_find_city(city)
     if city_id == -1:
         lat, lon = body.get('lat', ''), body.get('lon', '')
         params = {
             'latitude': lat,
             'longitude': lon,
-            'timezone': body.get('timezone', DEF_TIME_ZONE),
+            'timezone': TIME_ZONE,
             'hourly': ['temperature_2m', 'wind_speed_10m', 'relative_humidity_2m'],
             'daily': 'precipitation_sum',
             'forecast_days': 1,
