@@ -1,4 +1,3 @@
-import json
 from datetime import date
 from db_queries import db_queries
 from array import array
@@ -51,21 +50,28 @@ async def city_row(city, ret_params):
             return await cursor.fetchone()
 
 
-async def execute_query(query_name):
-    query = db_queries[query_name]
+async def initialize_db():
+    query_create = db_queries['create_city_forecasts']
+    query_index = db_queries['index_city_forecasts']
     async with aiosqlite.connect('weather.db') as db:
-        await db.execute(query) 
+        await db.execute(query_create)
+        await db.execute(query_index)
         await db.commit()
 
 
 async def save_to_db(table_name, values):
     query = db_queries[f'insert_{table_name}']
-    try:
-        async with aiosqlite.connect('weather.db') as db:
-            await db.execute(query, values) 
-            await db.commit()
-    except aiosqlite.IntegrityError:
-        pass
+    async with aiosqlite.connect('weather.db') as db:
+        await db.execute(query, values) 
+        await db.commit()
+
+
+async def find_city(city):
+    async with aiosqlite.connect('weather.db') as db:
+        async with db.execute(db_queries['find_city'], (city,)) as cursor:
+            row_id = await cursor.fetchone()
+            return row_id if row_id else -1
+
 
 async def update_forecasts():
     async with aiosqlite.connect('weather.db') as db:
@@ -98,7 +104,13 @@ async def weather_by_coords(query):
     }
     data, status = await open_meteo_api(params)
     if status == 200:
-        del data['generationtime_ms'], data['elevation']
+        new_data = {}
+        new_data['lat'] = query['lat']
+        new_data['lon'] = query['lon']
+        new_data['temperature'] = data['current']['temperature_2m']
+        new_data['wind_speed'] = data['current']['wind_speed_10m']
+        new_data['pressure'] = data['current']['pressure_msl']
+        data = new_data
     return data, status
 
 
@@ -167,31 +179,34 @@ async def get_cities(request):
 
 
 async def post_city(request):
-    data = None
+    data = {'result': 'City saved'}
     status = 200
     body = await request.post()
 
-    lat, lon, city = body.get('lat', ''), body.get('lon', ''), body.get('city')
+    city = body.get('city', '').lower()
     if not city:
         data = {'error': True, 'reason': 'The city parameter is not passed'}
         status = 400
         return web.json_response(data=data, status=status)
     
-    params = {
-        'latitude': lat,
-        'longitude': lon,
-        'timezone': body.get('timezone', DEF_TIME_ZONE),
-        'hourly': ['temperature_2m', 'wind_speed_10m', 'relative_humidity_2m'],
-        'daily': 'precipitation_sum',
-        'forecast_days': 1,
-    }
-    data, status = await open_meteo_api(params)
+    city_id = await find_city(city)
+    if city_id == -1:
+        lat, lon = body.get('lat', ''), body.get('lon', '')
+        params = {
+            'latitude': lat,
+            'longitude': lon,
+            'timezone': body.get('timezone', DEF_TIME_ZONE),
+            'hourly': ['temperature_2m', 'wind_speed_10m', 'relative_humidity_2m'],
+            'daily': 'precipitation_sum',
+            'forecast_days': 1,
+        }
+        data, status = await open_meteo_api(params)
 
-    if status == 200:
-        forecast = process_forecast(data)
-        row_values = (city.lower(), lat, lon, *forecast)
-        await save_to_db('city_forecasts', row_values)
-        data = {'result': 'City saved'}
+        if status == 200:
+            forecast = process_forecast(data)
+            row_values = (city.lower(), lat, lon, *forecast)
+            await save_to_db('city_forecasts', row_values)
+            data = {'result': 'City saved'}
     
     return web.json_response(data=data, status=status)
 
@@ -200,7 +215,7 @@ async def main():
     app_data['session'] = ClientSession()
 
     async with app_data['session']:
-        await execute_query('create_city_forecasts')
+        await initialize_db()
 
         app = web.Application()
         app.add_routes([
