@@ -1,11 +1,9 @@
-import json
 from datetime import date
 from db_queries import db_queries
 from array import array
 import asyncio
 import aiosqlite
 from aiohttp import web, ClientSession
-from contextlib import suppress
 
 
 app_data = {}
@@ -40,7 +38,6 @@ def validate_coords(query):
     assert len(lat) > 0 and len(lon) > 0, 'lat or lon are not passed'
 
     lat, lon = float(lat), float(lon)
-    # assert -90.0 <= lat <= 90.0, f'Invalid lat value {lat:.3}'
     assert abs(lat) - 90 < EPSILON, f'Invalid lat value {lat:.5}'
     assert abs(lon) - 180 < EPSILON, f'Invalid lat value {lon:.5}'
 
