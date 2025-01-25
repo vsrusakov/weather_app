@@ -10,10 +10,13 @@ from multidict._multidict import MultiDictProxy
 
 app_data = {}
 TIME_ZONE = 'Europe/Moscow'
-RETURN_PARAMS = ('precipitation', 'temperature', 'wind_speed', 'humidity')
+RETURN_VALUES = ('precipitation', 'temperature', 'wind_speed', 'humidity')
 
 
 def valudate_time(query: MultiDictProxy) -> int:
+    """
+    Проверка времени на соответствие формату hh:mm.
+    """
     time = query['time'].split(':')
     assert len(time) == 2, f'Invalid time format. Expected hh:mm. Got {query["time"]}'
     
@@ -24,20 +27,29 @@ def valudate_time(query: MultiDictProxy) -> int:
 
 
 def valudate_city(query: MultiDictProxy) -> str:
+    """
+    Проверка того, что передана непустая строка.
+    """
     assert len(query['city']) > 0, 'Invalid city name'
     return query['city'].lower()
 
 
-def validate_ret_params(query: MultiDictProxy) -> list[str]: 
-    ret_params = query.get('return', 'temperature').split(',')
-    assert all(p in RETURN_PARAMS for p in ret_params), f'Invalid parameter(s): {", ".join(query["return"])}'
-    return ret_params
+def validate_ret_values(query: MultiDictProxy) -> list[str]:
+    """
+    Функция валидирует значения параметра return в get-запросе к /weather (метод №4).
+    """
+    ret_values = query.get('return', 'temperature').split(',')
+    assert all(p in RETURN_VALUES for p in ret_values), f'Invalid return values(s): {", ".join(query["return"])}'
+    return ret_values
 
 
 def process_forecast(
         data_json: dict
     ) -> tuple[float, bytes, bytes, bytes]:
-
+    """
+    Функция обрабатывает json-данные о погоде, полученные от open meteo, извлекая те значения,
+    которые нужны для внесения в таблицу city_forecasts.
+    """
     precip = data_json['daily']['precipitation_sum'][0]
     hourly = data_json['hourly']
     temp = array('f', hourly['temperature_2m']).tobytes()
@@ -46,8 +58,12 @@ def process_forecast(
     return precip, temp, wind, humidity
 
 
-async def db_city_forecast(city: str, ret_params: list[str]) -> aiosqlite.Row:
-    query = db_queries['city_row'].format(', '.join(ret_params))
+async def db_city_forecast(city: str, ret_values: list[str]) -> aiosqlite.Row:
+    """
+    Сопрограмма извлекает из БД данные о погоде для города city. В аргумент ret_values
+    передаются имена нужных столбцов.
+    """
+    query = db_queries['city_row'].format(', '.join(ret_values))
 
     async with aiosqlite.connect('weather.db') as db:
         db.row_factory = aiosqlite.Row
@@ -56,6 +72,9 @@ async def db_city_forecast(city: str, ret_params: list[str]) -> aiosqlite.Row:
 
 
 async def initialize_db() -> None:
+    """
+    Сопрограмма создает таблицу city_forecasts и индекс по полю city на основе этой таблицы.
+    """
     query_create = db_queries['create_city_forecasts']
     query_index = db_queries['index_city_forecasts']
     async with aiosqlite.connect('weather.db') as db:
@@ -65,6 +84,9 @@ async def initialize_db() -> None:
 
 
 async def save_to_db(table_name: str, values: tuple) -> None:
+    """
+    Сопрограмма для вставки в таблицу table_name значений values.
+    """
     query = db_queries[f'insert_{table_name}']
     async with aiosqlite.connect('weather.db') as db:
         await db.execute(query, values) 
@@ -72,6 +94,11 @@ async def save_to_db(table_name: str, values: tuple) -> None:
 
 
 async def db_find_city(city: str) -> int:
+    """
+    Сопрограмма для проверки наличия в таблице city_forecasts строки, в которой
+    поле city равно аргументу city. Если строка найдена, возвращает 
+    ее ROWID, иначе возвращает -1.
+    """
     async with aiosqlite.connect('weather.db') as db:
         async with db.execute(db_queries['find_city'], (city,)) as cursor:
             row_id = await cursor.fetchone()
@@ -79,6 +106,10 @@ async def db_find_city(city: str) -> int:
 
 
 async def update_forecasts() -> None:
+    """
+    Сопрограмма для обновления данных о прогнозе погоды в городах из
+    таблицы city_forecasts.
+    """
     async with aiosqlite.connect('weather.db') as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(db_queries['select_rows']) as cursor:
@@ -96,11 +127,14 @@ async def update_forecasts() -> None:
                     new_fc = process_forecast(data)
                     for i, value in enumerate(new_fc):
                         if value != fc[i]:
-                            query = db_queries['update_forecasts'].format(RETURN_PARAMS[i])
+                            query = db_queries['update_forecasts'].format(RETURN_VALUES[i])
                             await db.execute(query, (value, row_id))
 
 
 async def weather_by_coords(query: MultiDictProxy) -> tuple[dict, int]:
+    """
+    Сопрограмма для получения данных о погоде на текущий момент по координатам.
+    """
     params = {
         'latitude': query['lat'],
         'longitude': query['lon'],
@@ -120,11 +154,13 @@ async def weather_by_coords(query: MultiDictProxy) -> tuple[dict, int]:
 
 
 async def weather_for_city(query: MultiDictProxy) -> tuple[dict, int]:
-
+    """
+    Сопрограмма для получения данных о погоде по названию города и времени.
+    """
     try:
         city = valudate_city(query)
         hour = valudate_time(query)
-        ret_params = validate_ret_params(query)
+        ret_values = validate_ret_values(query)
     except AssertionError as e:
         data = {'error': True, 'reason': str(e)}
         status = 400
@@ -135,7 +171,7 @@ async def weather_for_city(query: MultiDictProxy) -> tuple[dict, int]:
         data = {'error': True, 'reason': 'Server error'}
         status = 500
     else:
-        row = await db_city_forecast(city, ret_params)
+        row = await db_city_forecast(city, ret_values)
 
         if row is None:
             data = {'error': True, 'reason': 'The city is not in the database'}
@@ -143,7 +179,7 @@ async def weather_for_city(query: MultiDictProxy) -> tuple[dict, int]:
             return data, status
 
         row = dict(row)
-        for param in ret_params:
+        for param in ret_values:
             if param == 'precipitation':
                 continue
             row[param] = array('f', row[param])[hour]
@@ -154,12 +190,18 @@ async def weather_for_city(query: MultiDictProxy) -> tuple[dict, int]:
 
 
 async def open_meteo_api(params: dict) -> tuple[dict, int]:
+    """
+    Сопрограмма для отправки запросов к API open meteo.
+    """
     url = 'https://api.open-meteo.com/v1/forecast'
     async with app_data['session'].get(url=url, params=params) as response:
         return await response.json(), response.status
 
 
 async def get_weather(request: Request) -> Response:
+    """
+    Обработчик get-запросов к ресурсу /weather . Реализует методы №1 и №4.
+    """
     data = None
     status = 200
     query = request.query
@@ -176,6 +218,9 @@ async def get_weather(request: Request) -> Response:
 
 
 async def get_cities(request: Request) -> Response:
+    """
+    Обработчик get-запросов к ресурсу /cities . Реализует метод №3.
+    """
     async with aiosqlite.connect('weather.db') as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(db_queries['select_cities']) as cursor:
@@ -184,6 +229,9 @@ async def get_cities(request: Request) -> Response:
 
 
 async def post_city(request: Request) -> Response:
+    """
+    Обработчик post-запросов к ресурсу /city . Реализует метод №2.
+    """
     data = {'result': 'City saved'}
     status = 200
     body = await request.post()
