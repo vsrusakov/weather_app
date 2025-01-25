@@ -3,6 +3,9 @@ from array import array
 import asyncio
 import aiosqlite
 from aiohttp import web, ClientSession
+from aiohttp.web_request import Request
+from aiohttp.web_response import Response
+from multidict._multidict import MultiDictProxy
 
 
 app_data = {}
@@ -10,7 +13,7 @@ TIME_ZONE = 'Europe/Moscow'
 RETURN_PARAMS = ('precipitation', 'temperature', 'wind_speed', 'humidity')
 
 
-def valudate_time(query):
+def valudate_time(query: MultiDictProxy) -> int:
     time = query['time'].split(':')
     assert len(time) == 2, f'Invalid time format. Expected hh:mm. Got {query["time"]}'
     
@@ -20,18 +23,21 @@ def valudate_time(query):
     return hh
 
 
-def valudate_city(query):
+def valudate_city(query: MultiDictProxy) -> str:
     assert len(query['city']) > 0, 'Invalid city name'
     return query['city'].lower()
 
 
-def validate_ret_params(query): 
+def validate_ret_params(query: MultiDictProxy) -> list[str]: 
     ret_params = query.get('return', 'temperature').split(',')
     assert all(p in RETURN_PARAMS for p in ret_params), f'Invalid parameter(s): {", ".join(query["return"])}'
     return ret_params
 
 
-def process_forecast(data_json):
+def process_forecast(
+        data_json: dict
+    ) -> tuple[float, bytes, bytes, bytes]:
+
     precip = data_json['daily']['precipitation_sum'][0]
     hourly = data_json['hourly']
     temp = array('f', hourly['temperature_2m']).tobytes()
@@ -40,7 +46,7 @@ def process_forecast(data_json):
     return precip, temp, wind, humidity
 
 
-async def db_city_forecast(city, ret_params):
+async def db_city_forecast(city: str, ret_params: list[str]) -> aiosqlite.Row:
     query = db_queries['city_row'].format(', '.join(ret_params))
 
     async with aiosqlite.connect('weather.db') as db:
@@ -49,7 +55,7 @@ async def db_city_forecast(city, ret_params):
             return await cursor.fetchone()
 
 
-async def initialize_db():
+async def initialize_db() -> None:
     query_create = db_queries['create_city_forecasts']
     query_index = db_queries['index_city_forecasts']
     async with aiosqlite.connect('weather.db') as db:
@@ -58,21 +64,21 @@ async def initialize_db():
         await db.commit()
 
 
-async def save_to_db(table_name, values):
+async def save_to_db(table_name: str, values: tuple) -> None:
     query = db_queries[f'insert_{table_name}']
     async with aiosqlite.connect('weather.db') as db:
         await db.execute(query, values) 
         await db.commit()
 
 
-async def db_find_city(city):
+async def db_find_city(city: str) -> int:
     async with aiosqlite.connect('weather.db') as db:
         async with db.execute(db_queries['find_city'], (city,)) as cursor:
             row_id = await cursor.fetchone()
             return row_id if row_id else -1
 
 
-async def update_forecasts():
+async def update_forecasts() -> None:
     async with aiosqlite.connect('weather.db') as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(db_queries['select_rows']) as cursor:
@@ -94,7 +100,7 @@ async def update_forecasts():
                             await db.execute(query, (value, row_id))
 
 
-async def weather_by_coords(query):
+async def weather_by_coords(query: MultiDictProxy) -> tuple[dict, int]:
     params = {
         'latitude': query['lat'],
         'longitude': query['lon'],
@@ -113,7 +119,7 @@ async def weather_by_coords(query):
     return data, status
 
 
-async def weather_for_city(query):
+async def weather_for_city(query: MultiDictProxy) -> tuple[dict, int]:
 
     try:
         city = valudate_city(query)
@@ -147,13 +153,13 @@ async def weather_for_city(query):
     return data, status
 
 
-async def open_meteo_api(params):
+async def open_meteo_api(params: dict) -> tuple[dict, int]:
     url = 'https://api.open-meteo.com/v1/forecast'
     async with app_data['session'].get(url=url, params=params) as response:
         return await response.json(), response.status
 
 
-async def get_weather(request):
+async def get_weather(request: Request) -> Response:
     data = None
     status = 200
     query = request.query
@@ -169,7 +175,7 @@ async def get_weather(request):
     return web.json_response(data=data, status=status)
 
 
-async def get_cities(request):
+async def get_cities(request: Request) -> Response:
     async with aiosqlite.connect('weather.db') as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(db_queries['select_cities']) as cursor:
@@ -177,7 +183,7 @@ async def get_cities(request):
     return web.json_response(data=cities)
 
 
-async def post_city(request):
+async def post_city(request: Request) -> Response:
     data = {'result': 'City saved'}
     status = 200
     body = await request.post()
@@ -210,7 +216,7 @@ async def post_city(request):
     return web.json_response(data=data, status=status)
 
 
-async def main():
+async def main() -> None:
     app_data['session'] = ClientSession()
 
     async with app_data['session']:
