@@ -182,7 +182,8 @@ async def weather_for_city(query: MultiDictProxy) -> tuple[dict, int]:
         for param in ret_values:
             if param == 'precipitation':
                 continue
-            row[param] = array('f', row[param])[hour]
+            typecode = 'B' if param == 'humidity' else 'f'
+            row[param] = array(typecode, row[param])[hour]
         data = row
         status = 200
     
@@ -242,9 +243,14 @@ async def post_city(request: Request) -> Response:
         status = 400
         return web.json_response(data=data, status=status)
     
+    lat, lon = body.get('lat', ''), body.get('lon', '')
+    if not lat or not lon:
+        data = {'error': True, 'reason': 'lat or lon parameter is not passed'}
+        status = 400
+        return web.json_response(data=data, status=status)
+    
     city_id = await db_find_city(city)
     if city_id == -1:
-        lat, lon = body.get('lat', ''), body.get('lon', '')
         params = {
             'latitude': lat,
             'longitude': lon,
@@ -284,8 +290,9 @@ async def main() -> None:
         await site.start()
 
         while True:
-            await asyncio.sleep(900)
             await update_forecasts()
+            await asyncio.sleep(900)
+            # await update_forecasts()
 
 
 if __name__ == '__main__':
